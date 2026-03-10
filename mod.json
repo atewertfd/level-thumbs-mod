@@ -6,36 +6,34 @@
         "mac": "2.2081",
         "ios": "2.2081"
     },
-    "version": "v2.0.0-alpha.3",
-    "id": "cdc.level_thumbnails",
+    "id": "bnanadude6.level-thumbs",
     "name": "Level Thumbnails",
-    "developer": "cdc",
+    "version": "1.4.0",
+    "developer": "bnanadude6",
+    "description": "Adds thumbnails to levels in search.",
     "links": {
         "community": "https://discord.gg/GuagJDsqds",
         "source": "https://github.com/cdc-sys/level-thumbs-mod"
     },
-    "description": "Adds thumbnails to levels in search.",
     "resources": {
         "sprites": [
             "resources/thumbnailButton.png",
             "resources/noThumb.png"
-        ],
-        "files": [
-            "resources/submission_rules.md"
         ]
     },
     "settings": {
-        "show-in-browser": {
-            "name": "Enable Thumbnails",
-            "description": "Enables thumbnails in the <cy>Level Browser</c> and <cy>Search Results</c>. Doesn't affect the <cy>Level Page</c> background.",
-            "type": "bool",
-            "default": true
-        },
         "thumbnailButton": {
             "name": "Enable Thumbnail Button",
             "description": "Adds a <cj>button</c> in the <cy>Level Page</c> that lets you view the thumbnail of the level you are currently on.",
             "type": "bool",
             "default": true
+        },
+        "cache-limit": {
+            "name": "Cache Limit",
+            "description": "The amount of thumbnails that are cached in memory (Lower this if you have a low amount of available memory).",
+            "type": "int",
+            "min": 0,
+            "default": 50
         },
         "lists-limit-enabled": {
             "name": "Enable Thumbnail Limit In Lists",
@@ -51,97 +49,65 @@
             "enable-if": "lists-limit-enabled"
         },
         "enable-thumbnail-taking": {
-            "name": "In-Game Thumbnail Taking",
-            "description": "Enables the ability to take thumbnails and upload them to the server from the pause menu.",
+            "name": "In-Game Thumbnail Taking (EXPERIMENTAL)",
+            "description": "<cr>HEAVILY WIP, EXPECT ISSUES.</c>",
             "type": "bool",
             "default": false
         },
-        "cache-title": {
-            "name": "Caching",
-            "type": "title"
-        },
-        "cache-limit": {
-            "name": "Thumbnail Cache Limit",
-            "description": "The amount of thumbnails that are cached in memory (Lower this if you have a low amount of available memory).",
-            "type": "int",
-            "min": 0,
-            "default": 50
-        },
-        "file-cache-limit": {
-            "name": "File Cache Limit",
-            "description": "The amount of thumbnails that are cached on disk to avoid re-downloading them. -1 for unlimited (may use a lot of disk space).",
-            "type": "int",
-            "min": -1,
-            "default": 150
-        },
-        "api-title": {
-            "name": "API Settings",
-            "type": "title"
-        },
-        "level-thumbnails-api": {
-            "name": "Level Thumbnails API URL",
-            "description": "Base URL for the API that provides the thumbnails. Leave default for original.",
+        "level-thumbnails-url-new": {
+            "name": "Level Thumbnails URL",
+            "description": "This is the URL where the mod will fetch the thumbnails. Leave default for original.",
             "type": "string",
             "match": "(http|https):\\/\\/([\\w_-]+(?:(?:\\.[\\w_-]+)+))([\\w.,@?^=%&:\\/~+#-]*[\\w@?^=%&\\/~+#-])",
             "filter": "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:.-_/0123456789",
-            "default": "https://levelthumbs.prevter.me"
+            "default": "https://levelthumbs.prevter.me/thumbnail"
         },
         "legacy-url": {
-            "name": "Legacy Host",
-            "description": "Enable this to use the API in legacy mode (raw PNGs) instead of the new format.",
+            "name": "Legacy URL",
+            "description": "Turn this on if you're using a server that still uses the old <cj>png</c> format.",
             "type": "bool",
             "default": false
         },
-        "level-bg-title": {
-            "name": "Level Page Background",
-            "type": "title"
+        "level-thumbnails-url": {
+            "name": "Legacy Images URL",
+            "description": "This is the URL where the mod will fetch the thumbnails (Legacy PNGs). Leave default for original.",
+            "type": "string",
+            "match": "(http|https):\\/\\/([\\w_-]+(?:(?:\\.[\\w_-]+)+))([\\w.,@?^=%&:\\/~+#-]*[\\w@?^=%&\\/~+#-])",
+            "filter": "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:.-_/0123456789",
+            "enable-if": "legacy-url",
+            "default": "https://tjcsucht.net/levelthumbs"
         },
         "level-bg": {
-            "name": "Enable Background",
+            "name": "Level BG",
             "description": "Enable displaying thumbnails as the background in the online level screen.",
             "type": "bool",
             "default": true
         },
-        "level-bg-quality": {
-            "name": "Image Quality",
-            "description": "The quality of the thumbnail used for the background (setting this to low uses the already downloaded thumbnail, having blur enabled forces this to low).",
-            "type": "string",
-            "one-of": ["Low", "Medium", "High"],
-            "default": "High",
-            "enable-if": "level-bg && !level-bg-blur"
-        },
         "darkening": {
-            "name": "Background Darkening",
+            "name": "Level BG Darkening",
             "type": "int",
             "min": 1,
             "max": 255,
             "enable-if": "level-bg",
             "default": 100
         },
-        "level-bg-blur": {
-            "name": "Enable Blur",
+        "enable-blur": {
+            "name": "Level BG Blur",
             "type": "bool",
             "enable-if": "level-bg",
-            "default": true
+            "default": false
         },
         "blur-strength": {
-            "name": "Blur Radius",
+            "name": "Level BG Blur Strength",
             "description": "How blurred the background will be.",
             "type": "int",
             "min": 1,
             "max": 10,
-            "default": 3,
-            "enable-if": "level-bg-blur"
-        },
-        "link-account": {
-            "name": "Link Account",
-            "description": "acc link",
-            "type": "custom:link-account",
-            "default": {}
+            "default": 2,
+            "enable-if": "enable-blur"
         }
     },
     "dependencies": {
-        "geode.node-ids": ">=1.7.1",
-        "prevter.imageplus": ">=1.0.0"
+        "geode.node-ids": ">=v1.20.0"
     }
 }

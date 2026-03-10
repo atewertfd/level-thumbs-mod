@@ -1,26 +1,44 @@
 #include "SettingsManager.hpp"
 
+#include <algorithm>
+
 using namespace geode::prelude;
 
-bool Settings::showInBrowser() {
+bool Settings::showThumbnailButton() {
     static bool value = (
-        listenForSettingChanges<bool>("show-in-browser",[](bool val) { value = val; }),
-        getMod()->getSettingValue<bool>("show-in-browser")
+        listenForSettingChanges<bool>("thumbnailButton", [](bool val) {
+            value = val;
+        }),
+        getMod()->getSettingValue<bool>("thumbnailButton")
     );
     return value;
 }
 
-bool Settings::showThumbnailButton() {
+bool Settings::listsLimitEnabled() {
     static bool value = (
-        listenForSettingChanges<bool>("thumbnailButton",[](bool val) { value = val; }),
-        getMod()->getSettingValue<bool>("thumbnailButton")
+        listenForSettingChanges<bool>("lists-limit-enabled", [](bool val) {
+            value = val;
+        }),
+        getMod()->getSettingValue<bool>("lists-limit-enabled")
+    );
+    return value;
+}
+
+int64_t Settings::levelListsLimit() {
+    static int64_t value = (
+        listenForSettingChanges<int64_t>("level-lists-limit", [](int64_t val) {
+            value = val;
+        }),
+        getMod()->getSettingValue<int64_t>("level-lists-limit")
     );
     return value;
 }
 
 bool Settings::thumbnailTakingEnabled() {
     static bool value = (
-        listenForSettingChanges<bool>("enable-thumbnail-taking",[](bool val) { value = val; }),
+        listenForSettingChanges<bool>("enable-thumbnail-taking", [](bool val) {
+            value = val;
+        }),
         getMod()->getSettingValue<bool>("enable-thumbnail-taking")
     );
     return value;
@@ -28,81 +46,69 @@ bool Settings::thumbnailTakingEnabled() {
 
 int64_t Settings::thumbnailCacheLimit() {
     static int64_t value = (
-        listenForSettingChanges<int64_t>("cache-limit",[](int64_t val) { value = val; }),
+        listenForSettingChanges<int64_t>("cache-limit", [](int64_t val) {
+            value = val;
+        }),
         getMod()->getSettingValue<int64_t>("cache-limit")
     );
     return value;
 }
 
-int64_t Settings::thumbnailFileCacheLimit() {
-    static int64_t value = (
-        listenForSettingChanges<int64_t>("file-cache-limit",[](int64_t val) { value = val; }),
-        getMod()->getSettingValue<int64_t>("file-cache-limit")
-    );
-    return value;
-}
-
-std::string_view Settings::thumbnailAPIBaseURL() {
+std::string Settings::thumbnailBaseUrl() {
     static std::string value = (
-        listenForSettingChanges<std::string>("level-thumbnails-api",[](std::string val) { value = std::move(val); }),
-        getMod()->getSettingValue<std::string>("level-thumbnails-api")
+        listenForSettingChanges<std::string>("level-thumbnails-url-new", [](std::string val) {
+            value = std::move(val);
+        }),
+        getMod()->getSettingValue<std::string>("level-thumbnails-url-new")
     );
+    static std::string legacyValue = (
+        listenForSettingChanges<std::string>("level-thumbnails-url", [](std::string val) {
+            legacyValue = std::move(val);
+        }),
+        getMod()->getSettingValue<std::string>("level-thumbnails-url")
+    );
+    if (isLegacyAPI()) {
+        return legacyValue;
+    }
     return value;
 }
 
 bool Settings::isLegacyAPI() {
     static bool value = (
-        listenForSettingChanges<bool>("legacy-url",[](bool val) { value = val; }),
+        listenForSettingChanges<bool>("legacy-url", [](bool val) {
+            value = val;
+        }),
         getMod()->getSettingValue<bool>("legacy-url")
     );
     return value;
 }
 
-bool Settings::isShowLevelBackground() {
+bool Settings::showLevelBackground() {
     static bool value = (
-        listenForSettingChanges<bool>("level-bg",[](bool val) { value = val; }),
+        listenForSettingChanges<bool>("level-bg", [](bool val) {
+            value = val;
+        }),
         getMod()->getSettingValue<bool>("level-bg")
     );
     return value;
 }
 
-uint8_t Settings::backgroundDimAmount() {
+uint8_t Settings::levelBackgroundDarkening() {
     static uint8_t value = (
-        listenForSettingChanges<int64_t>("darkening",[](int64_t val) { value = static_cast<uint8_t>(val); }),
-        static_cast<uint8_t>(getMod()->getSettingValue<int64_t>("darkening"))
-    );
-    return value;
-}
-
-bool Settings::isBackgroundBlurred() {
-    static bool value = (
-        listenForSettingChanges<bool>("level-bg-blur",[](bool val) { value = val; }),
-        getMod()->getSettingValue<bool>("level-bg-blur")
-    );
-    return value;
-}
-
-int64_t Settings::backgroundBlurRadius() {
-    static int64_t value = (
-        listenForSettingChanges<int64_t>("blur-strength",[](int64_t val) { value = val; }),
-        getMod()->getSettingValue<int64_t>("blur-strength")
-    );
-    return value;
-}
-
-static ThumbnailManager::Quality convertFromString(std::string_view str) {
-    if (str == "High") return ThumbnailManager::Quality::High;
-    if (str == "Medium") return ThumbnailManager::Quality::Medium;
-    if (str == "Low") return ThumbnailManager::Quality::Small;
-    return ThumbnailManager::Quality::High;
-}
-
-ThumbnailManager::Quality Settings::backgroundQuality() {
-    static ThumbnailManager::Quality value = (
-        listenForSettingChanges<std::string>("level-bg-quality",[](std::string val) {
-            value = convertFromString(val);
+        listenForSettingChanges<int64_t>("darkening", [](int64_t val) {
+            value = static_cast<uint8_t>(std::clamp<int64_t>(val, 1, 255));
         }),
-        convertFromString(getMod()->getSettingValue<std::string>("level-bg-quality"))
+        static_cast<uint8_t>(std::clamp<int64_t>(getMod()->getSettingValue<int64_t>("darkening"), 1, 255))
+    );
+    return value;
+}
+
+bool Settings::blurEnabled() {
+    static bool value = (
+        listenForSettingChanges<bool>("enable-blur", [](bool val) {
+            value = val;
+        }),
+        getMod()->getSettingValue<bool>("enable-blur")
     );
     return value;
 }

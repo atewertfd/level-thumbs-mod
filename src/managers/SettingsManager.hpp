@@ -1,21 +1,22 @@
 #pragma once
-#include "ThumbnailManager.hpp"
+
+#include <string>
+#include <string_view>
+
+#include <Geode/Geode.hpp>
 
 class Settings {
 public:
-    static bool showInBrowser();
     static bool showThumbnailButton();
+    static bool listsLimitEnabled();
+    static int64_t levelListsLimit();
     static bool thumbnailTakingEnabled();
 
     static int64_t thumbnailCacheLimit();
-    static int64_t thumbnailFileCacheLimit();
-
-    static std::string_view thumbnailAPIBaseURL();
+    static std::string thumbnailBaseUrl();
     static bool isLegacyAPI();
 
-    static bool isShowLevelBackground();
-    static ThumbnailManager::Quality backgroundQuality();
-    static uint8_t backgroundDimAmount();
-    static bool isBackgroundBlurred();
-    static int64_t backgroundBlurRadius();
+    static bool showLevelBackground();
+    static uint8_t levelBackgroundDarkening();
+    static bool blurEnabled();
 };

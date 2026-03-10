@@ -1,68 +1,126 @@
+#if !defined(GEODE_IS_MACOS) && !defined(GEODE_IS_IOS)
+
+#include <vector>
+
 #include <Geode/modify/PauseLayer.hpp>
+
 #include "../layers/ThumbnailPopup.hpp"
 #include "../managers/SettingsManager.hpp"
-#include "../utils/RenderTexture.hpp"
-
-#include <prevter.imageplus/include/api.hpp>
 
 using namespace geode::prelude;
 
-struct HideNode {
-    CCNode* node = nullptr;
-    bool wasVisible = false;
+class $modify(ThumbnailPauseLayer, PauseLayer) {
+    struct Fields {
+        std::vector<CCNode*> shiftedNodes;
+        CCPoint oldScenePos {};
+        float oldSceneScale = 1.f;
+        bool uiVisible = true;
+    };
 
-    HideNode(CCNode* parent, std::string_view id) {
-        if (parent) {
-            node = parent->getChildByID(id);
-            if (node) {
-                wasVisible = node->isVisible();
-                node->setVisible(false);
+    void prepareScreenshotScene(CCScene* scene, PlayLayer* playLayer) {
+        auto fields = m_fields.self();
+        fields->shiftedNodes.clear();
+        fields->oldScenePos = scene->getPosition();
+        fields->oldSceneScale = scene->getScale();
+
+        auto sceneContentSize = scene->getContentSize();
+        auto scaleFactor = CCDirector::get()->getContentScaleFactor();
+        scene->setAnchorPoint({0.f, 0.f});
+        scene->setScale((1080.f / sceneContentSize.height) / scaleFactor);
+
+        auto scaledSize = scene->getScaledContentSize();
+        scene->setPosition(((1920.f - (scaledSize.width * scaleFactor)) / 2.f / scaleFactor), 0.f);
+
+        if (auto uiLayer = playLayer->getChildByType<UILayer>(0)) {
+            fields->uiVisible = uiLayer->isVisible();
+            uiLayer->setVisible(false);
+        }
+
+        for (auto* obj : CCArrayExt<CCNode*>(playLayer->getChildren())) {
+            if (obj->getID() == "main-node" || obj == playLayer->m_shaderLayer) {
+                continue;
+            }
+            fields->shiftedNodes.push_back(obj);
+            obj->setPosition(obj->getPosition() + ccp(10000.f, 10000.f));
+        }
+    }
+
+    void restoreScreenshotScene(CCScene* scene, PlayLayer* playLayer) {
+        auto fields = m_fields.self();
+        scene->setScale(fields->oldSceneScale);
+        scene->setPosition(fields->oldScenePos);
+
+        if (auto uiLayer = playLayer->getChildByType<UILayer>(0)) {
+            uiLayer->setVisible(fields->uiVisible);
+        }
+
+        for (auto* obj : fields->shiftedNodes) {
+            if (obj) {
+                obj->setPosition(obj->getPosition() - ccp(10000.f, 10000.f));
             }
         }
+        fields->shiftedNodes.clear();
     }
 
-    ~HideNode() {
-        if (node) {
-            node->setVisible(wasVisible);
+    void doScreenshot() {
+        auto playLayer = PlayLayer::get();
+        if (!playLayer) {
+            return;
         }
+
+        auto scene = CCDirector::sharedDirector()->getRunningScene();
+        if (!scene) {
+            return;
+        }
+
+        auto scaleFactor = CCDirector::get()->getContentScaleFactor();
+        auto renderTexture = CCRenderTexture::create(1920 / scaleFactor, 1080 / scaleFactor);
+        if (!renderTexture) {
+            return;
+        }
+
+        this->setVisible(false);
+        prepareScreenshotScene(scene, playLayer);
+
+        renderTexture->begin();
+        scene->visit();
+        renderTexture->end();
+
+        restoreScreenshotScene(scene, playLayer);
+        this->setVisible(true);
+
+        auto image = renderTexture->newCCImage();
+        if (!image) {
+            return;
+        }
+
+        auto levelID = static_cast<int32_t>(playLayer->m_level->m_levelID.value());
+        auto path = fmt::format("{}/{}.png", Mod::get()->getSaveDir(), levelID);
+        image->saveToFile(path.c_str());
+        image->release();
+
+        ThumbnailPopup::create(levelID, true)->show();
     }
-};
 
-#define HIDE_NODE(parent, id) HideNode GEODE_CONCAT(hide_, __COUNTER__)(parent, id);
+    void onScreenshot(CCObject*) {
+        auto playLayer = PlayLayer::get();
+        if (!playLayer || !playLayer->m_level) {
+            return;
+        }
 
-struct UIObjectState {
-    GameObject* object;
-    CCPoint oldStartPos;
-    CCPoint originalStartPos;
-    CCPoint position;
-};
+        if (playLayer->m_shaderLayer && playLayer->m_shaderLayer->getParent()) {
+            FLAlertLayer::create(
+                "Oops!",
+                "Taking a thumbnail while a <cy>shader</c> is present on screen is <cr>not yet supported.</c>",
+                "OK"
+            )->show();
+            return;
+        }
 
-static std::vector<UIObjectState> fixUIObjects(PlayLayer* pl) {
-    std::vector<UIObjectState> uiObjects;
-
-    for (auto obj : geode::cocos::CCArrayExt<GameObject*>(pl->m_objects)) {
-        auto it = pl->m_uiObjectPositions.find(obj->m_uniqueID);
-        if (it == pl->m_uiObjectPositions.end()) continue;
-        uiObjects.push_back({obj, obj->m_startPosition, it->second, obj->getPosition()});
-        obj->setStartPos(it->second);
+        doScreenshot();
     }
 
-    pl->positionUIObjects();
-
-    return uiObjects;
-}
-
-static void revertUIObjects(PlayLayer* pl, std::vector<UIObjectState> const& uiObjects) {
-    for (auto const& state : uiObjects) {
-        state.object->setStartPos(state.oldStartPos);
-        state.object->setPosition(state.position);
-    }
-
-    pl->positionUIObjects();
-}
-
-class $modify(ThumbnailPauseLayer, PauseLayer) {
-    void customSetup() {
+    $override void customSetup() {
         PauseLayer::customSetup();
 
         if (!Settings::thumbnailTakingEnabled()) {
@@ -70,144 +128,21 @@ class $modify(ThumbnailPauseLayer, PauseLayer) {
         }
 
         auto playLayer = PlayLayer::get();
-        if (!playLayer || !playLayer->m_level || playLayer->m_level->m_levelID <= 0) {
+        if (!playLayer || !playLayer->m_level || playLayer->m_level->m_levelID.value() <= 0) {
             return;
         }
 
-        auto rightButtonMenu = this->getChildByID("right-button-menu");
-        if (!rightButtonMenu) {
+        auto menu = this->getChildByID("right-button-menu");
+        if (!menu) {
             return;
         }
 
-        auto screenshotSprite = CCSprite::create("thumbnailButton.png"_spr);
-        screenshotSprite->setScale(0.6f);
-        auto screenshotButton = CCMenuItemSpriteExtra::create(screenshotSprite, this, menu_selector(ThumbnailPauseLayer::onScreenshot));
-        rightButtonMenu->addChild(screenshotButton);
-        rightButtonMenu->updateLayout();
-    }
-
-    void onScreenshot(CCObject*) {
-        if (CCDirector::get()->getContentScaleFactor() < 4.f) {
-            FLAlertLayer::create(
-                "Screenshot Error",
-                "Thumbnails can only be taken with <cy>High Graphics</c> quality enabled.\n"
-                "Please enable it in the settings and try again.",
-                "OK"
-            )->show();
-            return;
-        }
-
-        auto playLayer = PlayLayer::get();
-        if (!playLayer) {
-            return;
-        }
-
-        HIDE_NODE(playLayer, "mat.run-info/RunInfoWidget");
-        HIDE_NODE(playLayer, "cheeseworks.speedruntimer/timer");
-        HIDE_NODE(playLayer, "sawblade.dim_mode/opacityLabel");
-        HIDE_NODE(playLayer, "zilko.xdbot/state-label");
-        HIDE_NODE(playLayer, "zilko.xdbot/frame-label");
-        HIDE_NODE(playLayer, "zilko.xdbot/recording-audio-label");
-        HIDE_NODE(playLayer, "zilko.xdbot/button-menu");
-        HIDE_NODE(playLayer, "dankmeme.globed2/game-overlay");
-        HIDE_NODE(playLayer, "tobyadd.gdh/labels_top_left");
-        HIDE_NODE(playLayer, "tobyadd.gdh/labels_top_right");
-        HIDE_NODE(playLayer, "tobyadd.gdh/labels_bottom_left");
-        HIDE_NODE(playLayer, "tobyadd.gdh/labels_bottom_right");
-        HIDE_NODE(playLayer, "tobyadd.gdh/labels_bottom");
-        HIDE_NODE(playLayer, "tobyadd.gdh/labels_top");
-
-        auto oldScale = playLayer->getScaleY();
-        playLayer->setScaleY(-oldScale); // flip y-axis because opengl
-        auto uiLayerVisible = playLayer->m_uiLayer->isVisible();
-        playLayer->m_uiLayer->setVisible(false);
-        auto percentage = playLayer->m_percentageLabel->isVisible();
-        playLayer->m_percentageLabel->setVisible(false);
-        auto progressBarVisible = playLayer->m_progressBar->isVisible();
-        playLayer->m_progressBar->setVisible(false);
-
-        auto shader = playLayer->m_shaderLayer;
-        bool hadShader = shader->getParent() != nullptr;
-        CCSize oldScreenSize{};
-
-        std::vector<UIObjectState> uiObjects;
-        std::unique_ptr<uint8_t[]> data;
-        bool pixelateHardEdges = false;
-        {
-            auto oldWinSize = CCDirector::get()->getWinSize();
-
-            RenderTexture rt(1920, 1080);
-            rt.begin();
-
-            auto newWinSize = CCDirector::get()->getWinSize();
-
-            // TODO: maybe don't do this if aspect ratio is the same?
-
-            playLayer->m_calculateTargetHeightOffset = true;
-            playLayer->m_updateGroundShadows = true;
-
-            playLayer->updateCamera(0.f);
-            uiObjects = fixUIObjects(playLayer);
-
-            if (hadShader) {
-                // fix shaderlayer
-                pixelateHardEdges = shader->m_state.m_pixelateHardEdges;
-                oldScreenSize = shader->m_screenSize;
-                shader->m_screenSize = newWinSize;
-                shader->setupShader(false);
-                if (!pixelateHardEdges) {
-                    ccTexParams a = {GL_LINEAR,GL_LINEAR};
-                    shader->m_sprite->getTexture()->setTexParameters(&a);
-                }
-                shader->prePixelateShader();
-                playLayer->updateShaderLayer(0.f);
-            }
-
-            playLayer->updateVisibility(0.f);
-            playLayer->visit();
-
-            // mark as dirty again
-            playLayer->m_updateGroundShadows = true;
-            playLayer->m_calculateTargetHeightOffset = true;
-
-            data = rt.getData();
-            rt.end();
-        }
-
-        playLayer->setScaleY(oldScale);
-        playLayer->m_uiLayer->setVisible(uiLayerVisible);
-        playLayer->m_percentageLabel->setVisible(percentage);
-        playLayer->m_progressBar->setVisible(progressBarVisible);
-        revertUIObjects(playLayer, uiObjects);
-        if (hadShader) {
-            shader->m_screenSize = oldScreenSize;
-            shader->setupShader(false);
-            if (!pixelateHardEdges) {
-                ccTexParams a = {GL_LINEAR, GL_LINEAR};
-                shader->m_sprite->getTexture()->setTexParameters(&a);
-            }
-            shader->prePixelateShader();
-        }
-
-        if (!data) {
-            log::error("Failed to take screenshot: could not get pixel data");
-            return;
-        }
-
-        auto res = imgp::encode::webp(data.get(), 1920, 1080, false, 100);
-        if (!res) {
-            log::error("Failed to take screenshot: {}", res.unwrapErr());
-            return;
-        }
-
-        // TODO: upload to server
-        auto levelID = PlayLayer::get()->m_level->m_levelID;
-        auto saveDir = fmt::format("{}/{}.webp", Mod::get()->getSaveDir(),levelID);
-        if (auto saveRes = file::writeBinary(saveDir, *res); !saveRes) {
-            log::error("Failed to save screenshot: {}", saveRes.unwrapErr());
-            return;
-        }
-
-        ThumbnailPopup::create(levelID, saveDir)->show();
+        auto sprite = CCSprite::create("thumbnailButton.png"_spr);
+        sprite->setScale(0.6f);
+        auto button = CCMenuItemSpriteExtra::create(sprite, this, menu_selector(ThumbnailPauseLayer::onScreenshot));
+        menu->addChild(button);
+        menu->updateLayout();
     }
 };
+
+#endif

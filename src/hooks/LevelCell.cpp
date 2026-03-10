@@ -1,183 +1,298 @@
+#include <algorithm>
+#include <cmath>
+
 #include <Geode/modify/LevelCell.hpp>
-#include <Geode/modify/MenuLayer.hpp>
+#include <Geode/ui/LoadingSpinner.hpp>
 
 #include "../managers/SettingsManager.hpp"
 #include "../managers/ThumbnailManager.hpp"
-#include "../layers/ConfirmAlertLayer.hpp"
 
 using namespace geode::prelude;
 
+namespace {
+int32_t levelIDFrom(GJGameLevel* level) {
+    if (!level) {
+        return 0;
+    }
+    return static_cast<int32_t>(level->m_levelID.value());
+}
+}
+
 class $modify(ThumbnailLevelCell, LevelCell) {
     struct Fields {
-        TaskHolder<ThumbnailManager::FetchResult> m_fetchListener;
-        CCLabelBMFont* m_progressLabel = nullptr;
-        LoadingSpinner* m_spinner = nullptr;
-        CCClippingNode* m_clippingNode = nullptr;
-        CCLayerColor* m_separator = nullptr;
+        TaskHolder<ThumbnailManager::FetchResult> fetchTask;
+        CCLabelBMFont* progressLabel = nullptr;
+        LoadingSpinner* spinner = nullptr;
+        CCClippingNode* clipNode = nullptr;
+        CCLayerColor* separator = nullptr;
+        SEL_SCHEDULE parentCheckSchedule = nullptr;
+        uint16_t parentCheckTicks = 0;
+        uint64_t requestToken = 0;
+        int32_t requestedLevelID = 0;
     };
 
-    void updateProgressLabel(float progress) {
-        auto fields = m_fields.self();
+    CCPoint loadingSpinnerPos() {
+        auto fallback = m_compactView ? ccp(272.f, 25.f) : ccp(334.f, 15.f);
 
-        // update existing label
-        auto text = fmt::format("{:.0f}%", progress);
-        if (auto label = fields->m_progressLabel) {
-            label->setString(text.c_str());
+        auto mainLayer = this->getChildByID("main-layer");
+        if (!mainLayer) {
+            return fallback;
+        }
+
+        auto mainMenu = mainLayer->getChildByID("main-menu");
+        if (!mainMenu) {
+            return fallback;
+        }
+
+        auto viewButton = mainMenu->getChildByID("view-button");
+        if (!viewButton) {
+            return fallback;
+        }
+
+        return viewButton->getPosition() + ccp(m_compactView ? -42.f : 20.f, m_compactView ? 0.f : -30.f);
+    }
+
+    void stopParentCheck() {
+        if (m_fields->parentCheckSchedule) {
+            this->unschedule(m_fields->parentCheckSchedule);
+        }
+        m_fields->parentCheckTicks = 0;
+    }
+
+    void startParentCheck() {
+        if (!m_fields->parentCheckSchedule) {
+            m_fields->parentCheckSchedule = schedule_selector(ThumbnailLevelCell::checkParentForDaily);
+        }
+        stopParentCheck();
+        this->schedule(m_fields->parentCheckSchedule);
+    }
+
+    void checkParentForDaily(float) {
+        if (!m_fields->clipNode || !m_fields->separator) {
+            stopParentCheck();
             return;
         }
 
-        // create label
-        auto label = CCLabelBMFont::create(text.c_str(),"bigFont.fnt");
-        label->setPosition({352, 1});
-        label->setAnchorPoint({1, 0});
-        label->setScale(0.25f);
-        label->setOpacity(128);
-        label->setID("download-progress"_spr);
-        fields->m_progressLabel = label;
-        this->addChild(label);
-
-        // loading indicator
-        auto spinner = LoadingSpinner::create(18.f);
-        spinner->setPosition(m_compactView ? ccp(272, 25) : ccp(334, 15));
-        spinner->setID("spinner"_spr);
-        fields->m_spinner = spinner;
-        this->addChild(spinner);
-    }
-
-    void removeLoadingIndicators() {
-        auto fields = m_fields.self();
-        if (auto label = fields->m_progressLabel) {
-            label->removeFromParent();
-            fields->m_progressLabel = nullptr;
+        if (auto parent = getParent()) {
+            if (typeinfo_cast<DailyLevelNode*>(parent)) {
+                applyDailyAdjustments();
+            }
+            stopParentCheck();
+            return;
         }
-        if (auto spinner = fields->m_spinner) {
-            spinner->removeFromParent();
-            fields->m_spinner = nullptr;
+
+        m_fields->parentCheckTicks++;
+        if (m_fields->parentCheckTicks > 180) {
+            stopParentCheck();
         }
     }
 
-    void fixDailyCell() {
-        constexpr float dailyMult = 1.22;
+    void clearLoadingNodes() {
+        if (m_fields->progressLabel) {
+            m_fields->progressLabel->removeFromParent();
+            m_fields->progressLabel = nullptr;
+        }
+        if (m_fields->spinner) {
+            m_fields->spinner->removeFromParent();
+            m_fields->spinner = nullptr;
+        }
+    }
 
-        auto fields = m_fields.self();
+    void clearThumbNodes() {
+        if (m_fields->clipNode) {
+            m_fields->clipNode->removeFromParent();
+            m_fields->clipNode = nullptr;
+        }
+        if (m_fields->separator) {
+            m_fields->separator->removeFromParent();
+            m_fields->separator = nullptr;
+        }
+    }
 
-        fields->m_separator->setScaleX(0.45 * dailyMult);
-        fields->m_separator->setScaleY(dailyMult);
-        fields->m_separator->setPosition({m_backgroundLayer->getContentWidth() - (fields->m_separator->getContentWidth() * dailyMult)/2 - 20 + 7, -7.9f});
-        fields->m_clippingNode->setScale(dailyMult);
-        fields->m_clippingNode->setPosition(fields->m_clippingNode->getPosition().x + 7, -7.9f);
+    void resetNodes() {
+        stopParentCheck();
+        clearLoadingNodes();
+        clearThumbNodes();
+    }
 
-        auto parent = getParent();
-        if (!parent) return;
+    void updateProgress(float progress) {
+        if (progress <= 1.f) {
+            progress *= 100.f;
+        }
+        progress = std::clamp(progress, 0.f, 100.f);
 
-        if (auto bg = typeinfo_cast<CCScale9Sprite*>(parent->getChildByID("background"))){
-            NineSlice* border = NineSlice::create("GJ_square07.png");
+        if (!m_fields->progressLabel) {
+            auto label = CCLabelBMFont::create("0%", "bigFont.fnt");
+            label->setPosition({352.f, 1.f});
+            label->setAnchorPoint({1.f, 0.f});
+            label->setScale(0.25f);
+            label->setOpacity(128);
+            label->setID("download-progress"_spr);
+            this->addChild(label);
+            m_fields->progressLabel = label;
+        }
+
+        if (!m_fields->spinner) {
+            auto spinner = LoadingSpinner::create(18.f);
+            spinner->setPosition(loadingSpinnerPos());
+            spinner->setID("download-spinner"_spr);
+            this->addChild(spinner);
+            m_fields->spinner = spinner;
+        } else {
+            m_fields->spinner->setPosition(loadingSpinnerPos());
+        }
+
+        m_fields->progressLabel->setString(fmt::format("{:.0f}%", std::round(progress)).c_str());
+    }
+
+    void applyDailyAdjustments() {
+        auto daily = typeinfo_cast<DailyLevelNode*>(getParent());
+        if (!daily || !m_fields->clipNode || !m_fields->separator || !m_backgroundLayer) {
+            return;
+        }
+
+        constexpr float dailyMult = 1.22f;
+        m_fields->separator->setScaleX(0.45f * dailyMult);
+        m_fields->separator->setScaleY(dailyMult);
+        m_fields->separator->setPosition({
+            m_backgroundLayer->getContentWidth() - (m_fields->separator->getContentWidth() * dailyMult) / 2.f - 13.f,
+            -7.9f
+        });
+        m_fields->clipNode->setScale(dailyMult);
+        m_fields->clipNode->setPosition(m_fields->clipNode->getPosition().x + 7.f, -7.9f);
+
+        if (auto bg = typeinfo_cast<CCScale9Sprite*>(daily->getChildByID("background"))) {
+            auto border = NineSlice::create("GJ_square07.png");
             border->setContentSize(bg->getContentSize());
             border->setPosition(bg->getPosition());
             border->setColor(bg->getColor());
             border->setZOrder(5);
             border->setID("border"_spr);
-            parent->addChild(border);
+            daily->addChild(border);
         }
 
-        if (auto node = parent->getChildByID("crown-sprite")){
-            node->setZOrder(6);
+        if (auto crown = daily->getChildByID("crown-sprite")) {
+            crown->setZOrder(6);
         }
     }
 
-    void onDownloadSuccess(Ref<CCTexture2D> const& texture) {
-        this->removeLoadingIndicators();
+    void applyThumbnail(Ref<CCTexture2D> const& texture) {
+        clearThumbNodes();
+        clearLoadingNodes();
 
-        auto fields = m_fields.self();
-        m_backgroundLayer->setZOrder(-2);
-
-        auto sprite = CCSprite::createWithTexture(texture);
-        sprite->setID("thumbnail"_spr);
-        float imgScale = m_backgroundLayer->getContentHeight() / sprite->getContentHeight();
-        sprite->setScale(imgScale);
-
-        float separatorXMul = 1;
-        if (m_compactView){
-            sprite->setScale(imgScale * 1.3f);
-            separatorXMul = 0.75;
+        if (!m_backgroundLayer) {
+            return;
         }
 
-        constexpr float angle = 18;
+        m_backgroundLayer->setZOrder(-2);
+
+        auto image = CCSprite::createWithTexture(texture);
+        if (!image) {
+            return;
+        }
+        image->setID("thumbnail"_spr);
+
+        auto imgScale = m_backgroundLayer->getContentHeight() / image->getContentHeight();
+        image->setScale(imgScale);
+
+        float separatorXMul = 1.f;
+        if (m_compactView) {
+            image->setScale(imgScale * 1.3f);
+            separatorXMul = 0.75f;
+        }
+
+        constexpr float angle = 18.f;
 
         auto rect = CCLayerColor::create({255, 255, 255});
-        CCSize scaledImageSize{sprite->getScaledContentWidth(), sprite->getContentHeight() * imgScale};
+        auto scaledImageSize = CCSize { image->getScaledContentWidth(), image->getContentHeight() * imgScale };
         rect->setSkewX(angle);
         rect->setContentSize(scaledImageSize);
-        rect->setAnchorPoint({1, 0});
-        
-        auto clippingNode = CCClippingNode::create();
-        clippingNode->setStencil(rect);
-        clippingNode->addChild(sprite);
-        clippingNode->setContentSize(scaledImageSize);
-        clippingNode->setAnchorPoint({1, 0});
-        clippingNode->setPosition({m_backgroundLayer->getContentWidth(), 0.3f});
-        clippingNode->setID("clipping-node"_spr);
-        fields->m_clippingNode = clippingNode;
+        rect->setAnchorPoint({1.f, 0.f});
 
-        float scale =  m_backgroundLayer->getContentHeight() / clippingNode->getContentHeight();
-        // rect->setScale(scale);
-        sprite->setPosition(clippingNode->getContentSize() * 0.5f);
+        auto clipNode = CCClippingNode::create();
+        clipNode->setStencil(rect);
+        clipNode->addChild(image);
+        clipNode->setContentSize(scaledImageSize);
+        clipNode->setAnchorPoint({1.f, 0.f});
+        clipNode->setPosition({m_backgroundLayer->getContentWidth(), 0.3f});
+        clipNode->setID("clip-node"_spr);
+        m_fields->clipNode = clipNode;
+
+        image->setPosition(clipNode->getContentSize() * 0.5f);
 
         auto separator = CCLayerColor::create({0, 0, 0});
         separator->setZOrder(-2);
         separator->setOpacity(50);
         separator->setScaleX(0.45f);
         separator->ignoreAnchorPointForPosition(false);
-        separator->setSkewX(angle*2);
+        separator->setSkewX(angle * 2.f);
         separator->setContentSize(scaledImageSize);
-        separator->setAnchorPoint({1, 0});
-        separator->setPosition({m_backgroundLayer->getContentWidth() - separator->getContentWidth()/2 - (20 * separatorXMul), 0.3f});
+        separator->setAnchorPoint({1.f, 0.f});
+        separator->setPosition({
+            m_backgroundLayer->getContentWidth() - separator->getContentWidth() / 2.f - (20.f * separatorXMul),
+            0.3f
+        });
         separator->setID("separator"_spr);
-        fields->m_separator = separator;
+        m_fields->separator = separator;
+
         this->addChild(separator);
+        clipNode->setZOrder(-1);
+        this->addChild(clipNode);
 
-        clippingNode->setZOrder(-1);
-        this->addChild(clippingNode);
-
-        auto parent = getParent();
-        if (typeinfo_cast<DailyLevelNode*>(parent) || typeinfo_cast<CCScale9Sprite*>(parent)){
-            this->fixDailyCell();
-        }
-    }
-
-    void onDownloadError(std::string const& error) {
-        this->removeLoadingIndicators();
+        applyDailyAdjustments();
+        startParentCheck();
     }
 
     $override void loadCustomLevelCell() {
         LevelCell::loadCustomLevelCell();
-        if (!Settings::showInBrowser()) {
+
+        resetNodes();
+        m_fields->requestToken++;
+        m_fields->requestedLevelID = levelIDFrom(m_level);
+
+        if (!m_level || m_fields->requestedLevelID <= 0) {
             return;
         }
 
-        auto fields = m_fields.self();
-        if (auto cached = ThumbnailManager::get().getThumbnail(m_level->m_levelID, ThumbnailManager::Quality::Small)) {
-            this->onDownloadSuccess(std::move(cached).value());
+        if (Settings::listsLimitEnabled() && m_level->m_listPosition > Settings::levelListsLimit()) {
             return;
         }
 
-        // update progress at the beginning of the download to not have instant downloads look weird
-        this->updateProgressLabel(0);
-        fields->m_fetchListener.spawn(
+        if (auto cached = ThumbnailManager::get().getThumbnail(m_fields->requestedLevelID)) {
+            applyThumbnail(cached.value());
+            return;
+        }
+
+        updateProgress(0.f);
+        auto token = m_fields->requestToken;
+        auto levelID = m_fields->requestedLevelID;
+
+        m_fields->fetchTask.spawn(
             ThumbnailManager::get().fetchThumbnail(
-                m_level->m_levelID,
-                ThumbnailManager::Quality::Small,
-                [self = WeakRef(this)](web::WebProgress const& progress) {
-                    if (auto s = self.lock()) {
-                        s->updateProgressLabel(progress.downloadProgress().value_or(0.f));
+                levelID,
+                [self = WeakRef(this), token](web::WebProgress const& progress) {
+                    if (auto cell = self.lock()) {
+                        if (cell->m_fields->requestToken != token) {
+                            return;
+                        }
+                        cell->updateProgress(progress.downloadProgress().value_or(0.f));
                     }
                 }
             ),
-            [this](ThumbnailManager::FetchResult res) {
-                if (res.isOk()) {
-                    this->onDownloadSuccess(std::move(res).unwrap());
-                } else {
-                    this->onDownloadError(std::move(res).unwrapErr());
+            [self = WeakRef(this), token, levelID](ThumbnailManager::FetchResult res) {
+                if (auto cell = self.lock()) {
+                    if (cell->m_fields->requestToken != token) {
+                        return;
+                    }
+                    if (levelIDFrom(cell->m_level) != levelID) {
+                        return;
+                    }
+
+                    if (res.isOk()) {
+                        cell->applyThumbnail(std::move(res).unwrap());
+                    } else {
+                        cell->clearLoadingNodes();
+                    }
                 }
             }
         );

@@ -1,88 +1,50 @@
 #pragma once
-#include <shared_mutex>
-#include <Geode/Geode.hpp>
 
-#define USER_AGENT "LevelThumbnails/" GEODE_PLATFORM_NAME "/" MOD_VERSION
+#include <chrono>
+#include <mutex>
+#include <optional>
+#include <string>
+#include <unordered_map>
+
+#include <Geode/Geode.hpp>
+#include <Geode/utils/web.hpp>
+
+#ifndef MOD_VERSION
+#define MOD_VERSION "dev"
+#endif
+
+#define LEVEL_THUMBS_USER_AGENT "LevelThumbnails/" GEODE_PLATFORM_NAME "/" MOD_VERSION
 
 class ThumbnailManager {
-private:
-    ThumbnailManager();
-
 public:
-    ThumbnailManager(ThumbnailManager const&) = delete;
-    ThumbnailManager(ThumbnailManager&&) = delete;
-    ThumbnailManager& operator=(ThumbnailManager const&) = delete;
-    ThumbnailManager& operator=(ThumbnailManager&&) = delete;
+    using FetchResult = geode::Result<geode::Ref<cocos2d::CCTexture2D>>;
+    using FetchFuture = arc::Future<FetchResult>;
+    using ProgressCallback = geode::Function<void(geode::utils::web::WebProgress const&)>;
 
     static ThumbnailManager& get();
 
-    enum class Quality {
-        Small,
-        Medium,
-        High
-    };
+    std::optional<geode::Ref<cocos2d::CCTexture2D>> getThumbnail(int32_t levelID);
+    FetchFuture fetchThumbnail(int32_t levelID, ProgressCallback progress = nullptr);
 
-    enum class CacheState {
-        NotCached,
-        SavedOnDisk,
-        Ready
-    };
-
-    using FetchResult = geode::Result<geode::Ref<cocos2d::CCTexture2D>>;
-    using FetchFuture = arc::Future<FetchResult>;
-    using Progress = geode::utils::web::WebProgress const&;
-    using ProgressCallback = geode::Function<void(Progress)>;
-
-    using ThumbnailKey = geode::utils::StringBuffer<128>;
-
-    std::optional<geode::Ref<cocos2d::CCTexture2D>> getThumbnail(int32_t levelID, Quality quality = Quality::High);
-    FetchFuture fetchThumbnail(int32_t levelID, Quality quality = Quality::High, ProgressCallback progress = nullptr);
-    CacheState getCacheState(int32_t levelID, Quality quality = Quality::High);
-
-    static std::string getThumbnailUrl(int32_t levelID, Quality quality = Quality::High);
-    static std::filesystem::path getThumbnailPath(int32_t levelID, Quality quality = Quality::High);
-    static std::filesystem::path getThumbnailPath(std::string_view api, int32_t levelID, Quality quality);
-
-    static std::filesystem::path const& getCacheDirectory();
-
-    void cleanupFileCacheEntry(int32_t levelID, Quality quality);
-
-    void saveDiskCache();
+    static std::string buildRequestUrl(int32_t levelID);
+    static std::string buildDirectImageUrl(int32_t levelID);
 
 private:
-    static ThumbnailKey getThumbnailKey(int32_t levelID, Quality quality);
-
-    using DecodeResult = geode::Result<cocos2d::CCImage*>;
-
-    geode::Result<cocos2d::CCImage*> readImageFromFile(int32_t levelID, Quality quality);
-    static cocos2d::CCImage* decodeImage(std::vector<uint8_t> data);
-
-    void createTexture(
-        cocos2d::CCImage* img,
-        int32_t levelID, Quality quality,
-        arc::oneshot::Sender<geode::Result<geode::Ref<cocos2d::CCTexture2D>>> tx
-    );
-
-    void touch(std::string_view key, bool fileCache = false);
-    void evictIfNeeded();
-    void evictDiskCache();
+    ThumbnailManager() = default;
 
     struct CacheEntry {
         geode::Ref<cocos2d::CCTexture2D> texture;
         std::chrono::steady_clock::time_point lastAccess;
     };
 
-    struct FileCacheEntry {
-        int32_t levelID;
-        Quality quality;
-        std::string host;
-        std::chrono::system_clock::time_point lastAccess;
-    };
+    static std::string cacheKey(int32_t levelID);
+    static cocos2d::CCImage* decodeImage(std::vector<uint8_t> data);
+    void evictIfNeededLocked();
+    void rememberMissing(std::string const& key);
+    bool isMissingRecently(std::string const& key);
 
 private:
-    geode::utils::StringMap<CacheEntry> m_thumbnailCache;
-    geode::utils::StringMap<FileCacheEntry> m_fileCache;
-    std::shared_mutex m_cacheMutex;
-    std::shared_mutex m_fileCacheMutex;
-    bool m_scheduledEviction = false;
+    std::unordered_map<std::string, CacheEntry> m_cache;
+    std::unordered_map<std::string, std::chrono::steady_clock::time_point> m_missing;
+    std::mutex m_mutex;
 };

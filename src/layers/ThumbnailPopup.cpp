@@ -1,355 +1,230 @@
 #include "ThumbnailPopup.hpp"
-#include <chrono>
-#include <argon/argon.hpp>
-#include <fmt/format.h>
-#include <Geode/Geode.hpp>
-#include <Geode/cocos/textures/CCTextureCache.h>
-#include <Geode/ui/LoadingSpinner.hpp>
-#include <Geode/ui/Popup.hpp>
-#include <Geode/ui/TextArea.hpp>
-#include <Geode/utils/web.hpp>
-#include "ConfirmAlertLayer.hpp"
-#include "LoadingOverlay.hpp"
+
+#include <algorithm>
+
+#include "../managers/ThumbnailManager.hpp"
 
 using namespace geode::prelude;
 
-void ThumbnailPopup::onDownload(CCObject* sender) {
-    CCApplication::sharedApplication()->openURL(ThumbnailManager::getThumbnailUrl(m_levelID).c_str());
+namespace {
+float clipFloat(float n, float lower, float upper) {
+    return std::max(lower, std::min(n, upper));
+}
 }
 
-void ThumbnailPopup::onOpenFolder(CCObject* sender) {
+void ThumbnailPopup::onDownload(CCObject*) {
+    CCApplication::sharedApplication()->openURL(ThumbnailManager::buildDirectImageUrl(m_levelID).c_str());
+}
+
+void ThumbnailPopup::onOpenFolder(CCObject*) {
     file::openFolder(Mod::get()->getSaveDir());
-    clipboard::write(fmt::to_string(this->m_levelID));
+    clipboard::write(fmt::to_string(m_levelID));
     Notification::create("Copied ID to clipboard.", nullptr)->show();
 }
 
-void ThumbnailPopup::openDiscordServerPopup(CCObject* sender) {
-    if (m_isPreview){
+void ThumbnailPopup::openDiscordPopup(CCObject*) {
+    if (m_isScreenshotPreview) {
         createQuickPopup(
-            "Confirmation",
-            "Are you sure you want to submit?",
-            "No", "Yes",
-            [this](auto, bool btn2){
-                if (!Mod::get()->getSavedValue<bool>("showed-rules") && btn2){
-                    ConfirmAlertLayer::createRulesPopup(
-                        [this](bool btn2){
-                            if (btn2) {
-                                runSubmissionLogic();
-                                Mod::get()->setSavedValue<bool>("showed-rules", true);
-                            }
-                        },
-                        "Submission Rules",
-                        "submission_rules.md",
-                        "OK","Submit"
-                    )->show();
-                } else {
-                    if (btn2) runSubmissionLogic();
-                }
-            }
-        );
-    } else {
-        createQuickPopup(
-            "No thumbnail!",
-            "This level seems to not have a <cj>Thumbnail</c>...\n"
-            "Don't worry, you can submit a thumbnail yourself! Open the level and click the thumbnail button in the pause menu.",
-            "No Thanks", "JOIN!",
-            [](auto, bool btn2) {
-                if (btn2) {
+            "Submit",
+            "To <cy>submit a thumbnail</c> you need to join the <cb>Discord</c> server.\nDo you want to <cg>join</c>?",
+            "No Thanks",
+            "JOIN!",
+            [](auto, bool yes) {
+                if (yes) {
                     CCApplication::sharedApplication()->openURL("https://discord.gg/GuagJDsqds");
                 }
             }
         );
+        return;
     }
-}
-void ThumbnailPopup::runSubmissionLogic() {
-    auto load = LoadingOverlay::create("Logging in...");
-    load->show();
-    m_uploadListener.spawn(
-        AuthManager::get().uploadThumbnail(
-            m_previewFileName, m_levelID,
-            [load](ZStringView progress) {
-                queueInMainThread([load, progress] {
-                    load->changeStatus(progress.c_str());
-                });
-            }
-        ),
-        [load](auto res){
-            load->fadeOut();
-            if (res.isOk()) {
-                FLAlertLayer::create("Success!", res.unwrapOrDefault(), "OK")->show();
-            } else {
-                FLAlertLayer::create("Error!", fmt::format("<cr>{}</c>", res.unwrapErr()), "OK")->show();
+
+    createQuickPopup(
+        "Uh Oh!",
+        "This level seems to not have a <cj>Thumbnail</c>...\n"
+        "You can join our <cg>Discord Server</c> and submit one yourself.",
+        "No Thanks",
+        "JOIN!",
+        [](auto, bool yes) {
+            if (yes) {
+                CCApplication::sharedApplication()->openURL("https://discord.gg/GuagJDsqds");
             }
         }
     );
 }
 
-
 bool ThumbnailPopup::init(int id) {
-    if (!Popup::init(395.f, 225.f, "GJ_square05.png"))
+    if (!Popup::init(395.f, 225.f, "GJ_square05.png")) {
         return false;
+    }
 
+    m_levelID = id;
     m_noElasticity = false;
-    auto winSize = CCDirector::sharedDirector()->getWinSize();
     this->setID("ThumbnailPopup");
+    this->setTitle("");
 
-    NineSlice* border = NineSlice::create("GJ_square07.png");
+    auto border = NineSlice::create("GJ_square07.png");
     border->setContentSize(m_bgSprite->getContentSize());
     border->setPosition(m_bgSprite->getPosition());
     border->setZOrder(2);
+    m_mainLayer->addChild(border);
 
-    CCLayerColor* mask = CCLayerColor::create({255, 255, 255});
-    mask->setContentSize({391, 220});
-    mask->setPosition({m_bgSprite->getContentSize().width/2 - 391.f/2, m_bgSprite->getContentSize().height/2 - 220.f/2});
+    auto mask = CCLayerColor::create({255, 255, 255});
+    mask->setContentSize({391.f, 220.f});
+    mask->setPosition({
+        m_bgSprite->getContentSize().width / 2.f - 195.5f,
+        m_bgSprite->getContentSize().height / 2.f - 110.f
+    });
 
-    m_bgSprite->setColor({50,50,50});
+    m_bgSprite->setColor({50, 50, 50});
 
     m_clippingNode = CCClippingNode::create();
     m_clippingNode->setContentSize(m_bgSprite->getContentSize());
     m_clippingNode->setStencil(mask);
     m_clippingNode->setZOrder(1);
-
-    m_mainLayer->addChild(border);
     m_mainLayer->addChild(m_clippingNode);
 
-    CCSprite* downloadSprite = CCSprite::createWithSpriteFrameName("GJ_downloadBtn_001.png");
+    auto downloadSprite = CCSprite::createWithSpriteFrameName("GJ_downloadBtn_001.png");
     m_downloadBtn = CCMenuItemSpriteExtra::create(downloadSprite, this, menu_selector(ThumbnailPopup::onDownload));
     m_downloadBtn->setEnabled(true);
-    m_downloadBtn->setVisible(!m_isPreview);
-    m_downloadBtn->setColor({125,125,125});
-
-    m_downloadBtn->setPosition({m_mainLayer->getContentSize().width - 5, 5});
-
+    m_downloadBtn->setVisible(!m_isScreenshotPreview);
+    m_downloadBtn->setColor({125, 125, 125});
+    m_downloadBtn->setPosition({m_mainLayer->getContentSize().width - 5.f, 5.f});
     m_buttonMenu->addChild(m_downloadBtn);
 
-    CCSprite* infoBtn = CCSprite::createWithSpriteFrameName("GJ_infoIcon_001.png");
-    CCSprite* infoBtnDark = CCSprite::createWithSpriteFrameName("GJ_infoIcon_001.png");
-    infoBtnDark->setColor({100,100,100});
-    m_thumbInfoBtn = CCMenuItemExt::createToggler(infoBtnDark, infoBtn, [this](auto self){
-        if (auto info = m_mainLayer->getChildByID("thumbnail-info")) info->setVisible(!self->isOn());
-        Mod::get()->setSavedValue<bool>("show-info", !self->isOn());
-    });
-    m_thumbInfoBtn->toggle(Mod::get()->getSavedValue<bool>("show-info"));
-    m_thumbInfoBtn->setVisible(!m_isPreview);
-
-    m_thumbInfoBtn->setPosition({m_mainLayer->getContentSize().width - 5, 220});
-
-    m_buttonMenu->addChild(m_thumbInfoBtn);
-
-    CCSprite* recenterSprite = CCSprite::createWithSpriteFrameName("GJ_undoBtn_001.png");
-    CCMenuItemSpriteExtra* recenterBtn = CCMenuItemSpriteExtra::create(recenterSprite, this, menu_selector(ThumbnailPopup::recenter));
-
-    recenterBtn->setPosition({5, 5});
+    auto recenterSprite = CCSprite::createWithSpriteFrameName("GJ_undoBtn_001.png");
+    auto recenterBtn = CCMenuItemSpriteExtra::create(recenterSprite, this, menu_selector(ThumbnailPopup::recenter));
+    recenterBtn->setPosition({5.f, 5.f});
     m_buttonMenu->addChild(recenterBtn);
 
-    #ifdef GEODE_IS_MACOS
+#ifdef GEODE_IS_MACOS
     recenterBtn->setVisible(false);
-    #endif
+#endif
 
-    ButtonSprite* infoSprite = ButtonSprite::create(m_isPreview ? "Submit" : "What's this?");
-    m_infoBtn = CCMenuItemSpriteExtra::create(infoSprite, this, menu_selector(ThumbnailPopup::openDiscordServerPopup));
-
-    m_infoBtn->setPosition({m_mainLayer->getContentSize().width/2.f, 6});
-    m_infoBtn->setVisible(m_isPreview);
+    auto infoSprite = ButtonSprite::create(m_isScreenshotPreview ? "Submit" : "What's this?");
+    m_infoBtn = CCMenuItemSpriteExtra::create(infoSprite, this, menu_selector(ThumbnailPopup::openDiscordPopup));
+    m_infoBtn->setPosition({m_isScreenshotPreview ? 293.f : m_mainLayer->getContentSize().width / 2.f, 6.f});
+    m_infoBtn->setVisible(m_isScreenshotPreview);
     m_infoBtn->setZOrder(3);
     m_buttonMenu->addChild(m_infoBtn);
 
-    m_theFunny = CCLabelBMFont::create(m_isPreview ? "Hiiii\ngeming\npopcorn\nskepper\nbob\nanvixo\nmoonstarmaster\ncdc\nlevel thumbnails bot\norangeyguy\ncrazytoast\nfuzzy\nkirky bonzai\nsilly billy" : "OwO", "bigFont.fnt");
-    m_theFunny->setPosition(m_bgSprite->getPosition());
-    m_theFunny->setVisible(m_isPreview);
-    m_theFunny->setScale(0.25f);
-
-    m_mainLayer->addChild(m_theFunny);
-
-    m_loadingCircle->setParentLayer(m_mainLayer);
-    m_loadingCircle->setPosition({m_mainLayer->getContentWidth()/2,m_mainLayer->getContentHeight()/2});
-    m_loadingCircle->setAnchorPoint({0.5,0.5});
-    m_loadingCircle->setScale(1.f);
-    m_loadingCircle->ignoreAnchorPointForPosition(false);
-    m_loadingCircle->show();
-
-
-    if (!m_isPreview){
-        m_downloadListener.spawn(
-            ThumbnailManager::get().fetchThumbnail(m_levelID, ThumbnailManager::Quality::High),
-            [this](Result<Ref<CCTexture2D>> result) {
-                if (result.isOk()) {
-                    this->onDownloadSuccess(result.unwrap());
-                } else {
-                    this->onDownloadError(result.unwrapErr());
-                }
-            }
+    if (m_isScreenshotPreview) {
+        auto openFolderSprite = ButtonSprite::create("Open Folder");
+        auto openFolderBtn = CCMenuItemSpriteExtra::create(
+            openFolderSprite,
+            this,
+            menu_selector(ThumbnailPopup::onOpenFolder)
         );
-
-        this->loadThumbnailInfo();
-    } else {
-        CCTextureCache::get()->removeTextureForKey(this->m_previewFileName.c_str());
-        this->onDownloadSuccess(Ref<CCTexture2D>(CCSprite::create(this->m_previewFileName.c_str())->getTexture()));
+        openFolderBtn->setPosition({132.f, 6.f});
+        openFolderBtn->setZOrder(3);
+        m_buttonMenu->addChild(openFolderBtn);
     }
 
+    m_funnyLabel = CCLabelBMFont::create("OwO", "bigFont.fnt");
+    m_funnyLabel->setPosition(m_bgSprite->getPosition());
+    m_funnyLabel->setVisible(m_isScreenshotPreview);
+    m_funnyLabel->setScale(0.25f);
+    m_mainLayer->addChild(m_funnyLabel);
+
+    m_loadingCircle = LoadingCircle::create();
+    m_loadingCircle->setParentLayer(m_mainLayer);
+    m_loadingCircle->setPosition({m_mainLayer->getContentWidth() / 2.f, m_mainLayer->getContentHeight() / 2.f});
+    m_loadingCircle->setScale(1.f);
+    m_loadingCircle->show();
+
+    if (m_isScreenshotPreview) {
+        auto path = fmt::format("{}/{}.png", Mod::get()->getSaveDir(), m_levelID);
+        CCTextureCache::get()->removeTextureForKey(path.c_str());
+        if (auto sprite = CCSprite::create(path.c_str())) {
+            m_loadingCircle->fadeAndRemove();
+            auto texture = Ref<CCTexture2D>(sprite->getTexture());
+            onDownloadSuccess(texture);
+        } else {
+            onDownloadFailed();
+        }
+    } else {
+        if (auto cached = ThumbnailManager::get().getThumbnail(m_levelID)) {
+            m_loadingCircle->fadeAndRemove();
+            onDownloadSuccess(cached.value());
+        } else {
+            m_downloadTask.spawn(
+                ThumbnailManager::get().fetchThumbnail(m_levelID),
+                [self = WeakRef(this)](ThumbnailManager::FetchResult result) {
+                    if (auto popup = self.lock()) {
+                        if (result.isOk()) {
+                            popup->onDownloadSuccess(std::move(result).unwrap());
+                        } else {
+                            popup->onDownloadFailed();
+                        }
+                    }
+                }
+            );
+        }
+    }
+
+    this->setTouchEnabled(true);
     return true;
 }
 
-void ThumbnailPopup::recenter(CCObject* sender) {
-    if(CCNode* node = m_clippingNode->getChildByID("thumbnail")) {
-        node->setPosition({m_mainLayer->getContentWidth()/2,m_mainLayer->getContentHeight()/2});
-        node->stopAllActions();
-        float scale = m_maxHeight/node->getContentSize().height;
-        node->setUserObject("new-scale", CCFloat::create(scale));
-        node->setScale(scale);
-        node->setAnchorPoint({0.5,0.5});
+void ThumbnailPopup::recenter(CCObject*) {
+    auto node = m_clippingNode ? m_clippingNode->getChildByID("thumbnail") : nullptr;
+    if (!node) {
+        return;
     }
+
+    node->setPosition({m_mainLayer->getContentWidth() / 2.f, m_mainLayer->getContentHeight() / 2.f});
+    node->stopAllActions();
+    auto scale = m_maxHeight / node->getContentSize().height;
+    node->setUserObject("new-scale", CCFloat::create(scale));
+    node->setScale(scale);
+    node->setAnchorPoint({0.5f, 0.5f});
 }
 
 void ThumbnailPopup::onDownloadSuccess(Ref<CCTexture2D> const& texture) {
-    // thanks for fucking this up sheepdotcom
     m_downloadBtn->setEnabled(true);
-    m_downloadBtn->setColor({255,255,255});
+    m_downloadBtn->setColor({255, 255, 255});
 
     auto image = CCSprite::createWithTexture(texture);
+    if (!image) {
+        onDownloadFailed();
+        return;
+    }
 
-    float scale = m_maxHeight/image->getContentSize().height;
+    auto scale = m_maxHeight / image->getContentSize().height;
     image->setScale(scale);
     image->setUserObject("scale", CCFloat::create(scale));
-    image->setPosition({m_mainLayer->getContentWidth()/2, m_mainLayer->getContentHeight()/2});
-
+    image->setPosition({m_mainLayer->getContentWidth() / 2.f, m_mainLayer->getContentHeight() / 2.f});
     image->setID("thumbnail");
     m_clippingNode->addChild(image);
-    m_loadingCircle->fadeAndRemove();
+
+    if (m_loadingCircle) {
+        m_loadingCircle->fadeAndRemove();
+    }
 }
 
-void ThumbnailPopup::onDownloadError(std::string const& error) {
-    // thanks for the image cvolton ;)
-    CCSprite* image = CCSprite::create("noThumb.png"_spr);
-    float scale = m_maxHeight / image->getContentSize().height;
+void ThumbnailPopup::onDownloadFailed() {
+    auto image = CCSprite::create("noThumb.png"_spr);
+    auto scale = m_maxHeight / image->getContentSize().height;
     image->setScale(scale);
     image->setUserObject("scale", CCFloat::create(scale));
-    image->setPosition({m_mainLayer->getContentWidth()/2, m_mainLayer->getContentHeight()/2});
+    image->setPosition({m_mainLayer->getContentWidth() / 2.f, m_mainLayer->getContentHeight() / 2.f});
     image->setID("thumbnail");
-
-    m_infoBtn->setVisible(true);
-    m_theFunny->setVisible(true);
     m_clippingNode->addChild(image);
-    m_loadingCircle->fadeAndRemove();
-}
 
-// adapted from
-// https://github.com/geode-sdk/geode/blob/2f390747385b2c7fcf15b606df10f87d671f3929/loader/src/server/Server.cpp#L262
-static Result<uint64_t> parseISOTimestamp(std::string str) {
-#ifdef GEODE_IS_WINDOWS
-    std::stringstream ss(str);
-    std::chrono::system_clock::time_point seconds;
-    if (ss >> std::chrono::parse("%Y-%m-%dT%H:%M:%S", seconds)) {
-        return Ok(std::chrono::duration_cast<std::chrono::seconds>(seconds.time_since_epoch()).count());
+    if (m_infoBtn) {
+        m_infoBtn->setVisible(true);
     }
-    return Err("Invalid date time format '{}'", str);
-#else
-    auto dotPos = str.find('.');
-    if (dotPos != std::string::npos) {
-        str.resize(dotPos);
+    if (m_funnyLabel) {
+        m_funnyLabel->setVisible(true);
     }
-
-    tm t;
-    auto ptr = strptime(str.c_str(), "%Y-%m-%dT%H:%M:%S", &t);
-    if (ptr == nullptr || (*ptr != '\0' && *ptr != 'Z')) {
-        return Err("Invalid date time format '{}'", str);
+    if (m_loadingCircle) {
+        m_loadingCircle->fadeAndRemove();
     }
-
-    return Ok(static_cast<uint64_t>(timegm(&t)));
-#endif
-}
-
-static std::string readISOTimestamp(matjson::Value const& value) {
-    auto res = value.asString();
-    if (!res) return "Unknown";
-
-    auto timeRes = parseISOTimestamp(std::move(res).unwrap());
-    if (!timeRes) {
-        log::warn("{}", timeRes.unwrapErr());
-        return "Unknown";
-    }
-
-    auto tm = geode::localtime(timeRes.unwrap());
-    return fmt::format("{:%Y-%m-%d %H:%M:%S}", tm);
-}
-
-void ThumbnailPopup::loadThumbnailInfo() {
-    SimpleTextArea* textArea = SimpleTextArea::create("Loading info...");
-    textArea->setAnchorPoint({0, 0});
-    textArea->setPosition({5, 5});
-    textArea->setScale(0.7f);
-    textArea->setVisible(false);
-
-    LoadingSpinner* loader = LoadingSpinner::create(45.f/2);
-    loader->setAnchorPoint({0, 0});
-    loader->setPosition({2.5f, 2.5f});
-
-    NineSlice* bg = NineSlice::create("square02b_001.png");
-    bg->setColor({0, 0, 0});
-    bg->setOpacity(120);
-    bg->setScale(0.5f);
-    //bg->setContentWidth(textArea->getScaledContentWidth()+10*2);
-    //bg->setContentHeight(textArea->getScaledContentHeight()+10*2);
-    bg->setContentWidth(55);
-    bg->setContentHeight(55);
-    bg->setAnchorPoint({0, 0});
-
-    CCNode* container = CCNode::create();
-    container->setID("thumbnail-info");
-    container->setAnchorPoint({0, 0});
-    container->setPosition({10, 10});
-    m_buttonMenu->setZOrder(100);
-    container->setZOrder(99);
-
-    container->addChild(bg);
-    container->addChild(textArea);
-    container->addChild(loader);
-
-    container->setVisible(Mod::get()->getSavedValue<bool>("show-info"));
-
-    this->m_mainLayer->addChild(container);
-    m_infoListener.spawn(
-        web::WebRequest()
-            .userAgent(USER_AGENT)
-            .get(fmt::format("{}/thumbnail/{}/info", Settings::thumbnailAPIBaseURL(), m_levelID)),
-        [textArea, container, bg, loader](web::WebResponse res) {
-            if (!res.ok()) {
-                container->setVisible(false);
-                return;
-            }
-
-            auto json = res.json().unwrapOrDefault();
-
-            auto uploader = json["username"].asString().unwrapOr("Unknown");
-            auto accepter = json["accepted_by_username"].asString().unwrapOr("Unknown");
-
-            auto upload_time = readISOTimestamp(json["upload_time"]);
-            auto first_upload_time = readISOTimestamp(json["first_upload_time"]);
-            auto accepted_time = readISOTimestamp(json["accepted_time"]);
-
-            textArea->setVisible(true);
-            textArea->setText(fmt::format(
-                "Submitted by: {}\n"
-                "Submitted at: {}\n"
-                "First submitted at: {}\n"
-                "Accepted by: {}\n"
-                "Accepted at: {}",
-                uploader, upload_time,
-                first_upload_time, accepter,
-                accepted_time
-            ));
-            bg->setContentWidth((textArea->getScaledContentWidth()+10)*2);
-            bg->setContentHeight((textArea->getScaledContentHeight()+10)*2);
-            loader->removeFromParent();
-        }
-    );
 }
 
 ThumbnailPopup* ThumbnailPopup::create(int id, bool screenshotPreview) {
     auto ret = new ThumbnailPopup();
-    ret->m_isPreview = false;
-    ret->m_levelID = id;
-    if (ret->init(-1)) {
+    ret->m_isScreenshotPreview = screenshotPreview;
+    if (ret->init(id)) {
         ret->autorelease();
         return ret;
     }
@@ -357,68 +232,55 @@ ThumbnailPopup* ThumbnailPopup::create(int id, bool screenshotPreview) {
     return nullptr;
 }
 
-ThumbnailPopup* ThumbnailPopup::create(int id, std::string filename) {
-    auto ret = new ThumbnailPopup();
-    ret->m_previewFileName = std::move(filename);
-    ret->m_isPreview = true;
-    ret->m_levelID = id;
-    if (ret->init(-1)) {
-        ret->autorelease();
-        return ret;
-    }
-    delete ret;
-    return nullptr;
-}
-
-float clip(float n, float lower, float upper) {
-  return std::max(lower, std::min(n, upper));
-}
-
-bool ThumbnailPopup::ccTouchBegan(CCTouch* pTouch, CCEvent* event){
-    if (m_touches.size() == 1){
-        //geode::log::info("this is where the second touch gets added");
-        //thank you matcool
+bool ThumbnailPopup::ccTouchBegan(CCTouch* touch, CCEvent* event) {
+    if (m_touches.size() == 1) {
         auto firstTouch = *m_touches.begin();
-
         auto firstLoc = firstTouch->getLocation();
-        auto secondLoc = pTouch->getLocation();
+        auto secondLoc = touch->getLocation();
 
-        this->m_touchMidPoint = (firstLoc + secondLoc) / 2.f;
-        // save current zoom level
-        this->m_initialScale = this->getChildByIDRecursive("thumbnail")->getScale();
-        // distance between the two touches
-        this->m_initialDistance = firstLoc.getDistance(secondLoc);
-        // anchor point
+        m_touchMidPoint = (firstLoc + secondLoc) / 2.f;
+
         auto thumbnail = this->getChildByIDRecursive("thumbnail");
+        if (!thumbnail) {
+            return Popup::ccTouchBegan(touch, event);
+        }
+
+        m_initialScale = thumbnail->getScale();
+        m_initialDistance = firstLoc.getDistance(secondLoc);
+
         auto oldAnchor = thumbnail->getAnchorPoint();
         auto worldPos = thumbnail->convertToWorldSpace({0, 0});
-        auto newAnchorX = (m_touchMidPoint.x-worldPos.x) / thumbnail->getScaledContentWidth();
-        auto newAnchorY = (m_touchMidPoint.y-worldPos.y) / thumbnail->getScaledContentHeight();
-        thumbnail->setAnchorPoint({clip(newAnchorX,0,1), clip(newAnchorY,0,1)});
+        auto newAnchorX = (m_touchMidPoint.x - worldPos.x) / thumbnail->getScaledContentWidth();
+        auto newAnchorY = (m_touchMidPoint.y - worldPos.y) / thumbnail->getScaledContentHeight();
+        auto clampedAnchor = CCPoint { clipFloat(newAnchorX, 0.f, 1.f), clipFloat(newAnchorY, 0.f, 1.f) };
+
+        thumbnail->setAnchorPoint(clampedAnchor);
         thumbnail->setPosition({
-            thumbnail->getPositionX()+thumbnail->getScaledContentWidth()*-(oldAnchor.x-clip(newAnchorX,0,1)),
-            thumbnail->getPositionY()+thumbnail->getScaledContentHeight()*-(oldAnchor.y-clip(newAnchorY,0,1))
+            thumbnail->getPositionX() + thumbnail->getScaledContentWidth() * -(oldAnchor.x - clampedAnchor.x),
+            thumbnail->getPositionY() + thumbnail->getScaledContentHeight() * -(oldAnchor.y - clampedAnchor.y)
         });
     }
-    //geode::log::info("touch added");
-    m_touches.insert(pTouch);
-    return true;
+
+    m_touches.insert(touch);
+    return Popup::ccTouchBegan(touch, event);
 }
 
-void ThumbnailPopup::ccTouchMoved(CCTouch* pTouch, CCEvent* event){
-    //geode::log::info("moved");
-    if (m_touches.size() == 1){
-        //geode::log::info("single touch");
-        CCNode* thumbnail = this->getChildByIDRecursive("thumbnail");
-        if (!thumbnail) return;
-        thumbnail->setPosition(thumbnail->getPosition() + pTouch->getDelta());
+void ThumbnailPopup::ccTouchMoved(CCTouch* touch, CCEvent* event) {
+#ifndef GEODE_IS_WINDOWS
+    if (m_touches.size() == 1) {
+        if (auto thumbnail = this->getChildByIDRecursive("thumbnail")) {
+            thumbnail->setPosition(thumbnail->getPosition() + touch->getDelta());
+        }
     }
-    if (m_touches.size() == 2){
-        this->wasZooming = true;
-        //geode::log::info("double touch (EPIC!)");
-        CCNode* thumbnail = this->getChildByIDRecursive("thumbnail");
-        if (!thumbnail) return;
-        //thank you matcool
+#endif
+
+    if (m_touches.size() == 2) {
+        m_wasZooming = true;
+        auto thumbnail = this->getChildByIDRecursive("thumbnail");
+        if (!thumbnail) {
+            return Popup::ccTouchMoved(touch, event);
+        }
+
         auto it = m_touches.begin();
         auto firstTouch = *it;
         ++it;
@@ -426,40 +288,37 @@ void ThumbnailPopup::ccTouchMoved(CCTouch* pTouch, CCEvent* event){
 
         auto firstLoc = firstTouch->getLocation();
         auto secondLoc = secondTouch->getLocation();
-        auto center = (firstLoc + secondLoc) / 2;
+        auto center = (firstLoc + secondLoc) / 2.f;
         auto distNow = firstLoc.getDistance(secondLoc);
+        if (distNow <= 0.01f) {
+            return Popup::ccTouchMoved(touch, event);
+        }
 
-        auto const mult = this->m_initialDistance / distNow;
-        auto zoom = clip(this->m_initialScale / mult, 0.2f, 6.5f);
+        auto zoom = clipFloat(m_initialScale / (m_initialDistance / distNow), 0.2f, 6.5f);
         thumbnail->setScale(zoom);
-        //geode::log::info("zoom {}",zoom);
 
-        auto centerDiff = this->m_touchMidPoint - center;
+        auto centerDiff = m_touchMidPoint - center;
         thumbnail->setPosition(thumbnail->getPosition() - centerDiff);
-        this->m_touchMidPoint = center;
+        m_touchMidPoint = center;
     }
+
+    Popup::ccTouchMoved(touch, event);
 }
 
-void ThumbnailPopup::ccTouchEnded(CCTouch* pTouch, CCEvent* event){
-    m_touches.erase(pTouch);
-    if (wasZooming && m_touches.size() == 1){
-        auto thumbnail = this->getChildByIDRecursive("thumbnail");
-        auto scale = thumbnail->getScale();
-        if (scale < 0.25f){
-            thumbnail->runAction(
-                CCEaseSineInOut::create(
-                    CCScaleTo::create(0.5f, 0.25f)
-                )
-            );
+void ThumbnailPopup::ccTouchEnded(CCTouch* touch, CCEvent* event) {
+    m_touches.erase(touch);
+    if (m_wasZooming && m_touches.size() == 1) {
+        if (auto thumbnail = this->getChildByIDRecursive("thumbnail")) {
+            auto scale = thumbnail->getScale();
+            if (scale < 0.25f) {
+                thumbnail->runAction(CCEaseSineInOut::create(CCScaleTo::create(0.5f, 0.25f)));
+            }
+            if (scale > 4.0f) {
+                thumbnail->runAction(CCEaseSineInOut::create(CCScaleTo::create(0.5f, 4.0f)));
+            }
         }
-        if (scale > 4.0f){
-            thumbnail->runAction(
-                CCEaseSineInOut::create(
-                    CCScaleTo::create(0.5f, 4.0f)
-                )
-            );
-        }
-        wasZooming = false;
+        m_wasZooming = false;
     }
-    //geode::log::info("ended");
+
+    Popup::ccTouchEnded(touch, event);
 }
