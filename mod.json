@@ -8,12 +8,11 @@
     },
     "id": "bnanadude6.level-thumbs",
     "name": "Level Thumbnails",
-    "version": "1.4.0",
+    "version": "1.5.0",
     "developer": "bnanadude6",
-    "description": "Adds thumbnails to levels in search.",
+    "description": "Adds level thumbnails to list cells and level info with modern caching and network controls.",
     "links": {
-        "community": "https://discord.gg/GuagJDsqds",
-        "source": "https://github.com/cdc-sys/level-thumbs-mod"
+        "source": "https://github.com/atewertfd/level-thumbs-mod"
     },
     "resources": {
         "sprites": [
@@ -22,89 +21,272 @@
         ]
     },
     "settings": {
+        "section-general": {
+            "type": "title",
+            "name": "General"
+        },
+        "level-cell-thumbnails": {
+            "name": "Show List Thumbnails",
+            "description": "Display thumbnails directly in level cells.",
+            "type": "bool",
+            "default": true
+        },
         "thumbnailButton": {
             "name": "Enable Thumbnail Button",
-            "description": "Adds a <cj>button</c> in the <cy>Level Page</c> that lets you view the thumbnail of the level you are currently on.",
+            "description": "Adds a button in <cy>Level Info</c> to open the full thumbnail popup.",
             "type": "bool",
             "default": true
         },
-        "cache-limit": {
-            "name": "Cache Limit",
-            "description": "The amount of thumbnails that are cached in memory (Lower this if you have a low amount of available memory).",
-            "type": "int",
-            "min": 0,
-            "default": 50
+        "show-download-progress": {
+            "name": "Show Download Progress Text",
+            "description": "Shows percentage text while thumbnails are downloading in level lists.",
+            "type": "bool",
+            "default": true,
+            "enable-if": "level-cell-thumbnails"
         },
         "lists-limit-enabled": {
-            "name": "Enable Thumbnail Limit In Lists",
-            "description": "Allows you to <cy>limit</c> the amount of thumbnails shown in level lists.\n<cy>Enable this setting if you experience lag when loading larger lists.</c>",
+            "name": "Limit Thumbnails In Lists",
+            "description": "Only show thumbnails for the first N levels in each list to reduce lag.",
             "type": "bool",
-            "default": false
+            "default": false,
+            "enable-if": "level-cell-thumbnails"
         },
         "level-lists-limit": {
-            "name": "Limit",
-            "description": "Thumbnails won't be shown past the level with the limit as it's place in the list.",
+            "name": "List Thumbnail Limit",
+            "description": "Maximum list position that can show a thumbnail.",
             "type": "int",
+            "min": 1,
+            "max": 100,
             "default": 5,
-            "enable-if": "lists-limit-enabled"
+            "enable-if": "level-cell-thumbnails && lists-limit-enabled"
         },
-        "enable-thumbnail-taking": {
-            "name": "In-Game Thumbnail Taking (EXPERIMENTAL)",
-            "description": "<cr>HEAVILY WIP, EXPECT ISSUES.</c>",
-            "type": "bool",
-            "default": false
+
+        "section-appearance": {
+            "type": "title",
+            "name": "Appearance"
         },
-        "level-thumbnails-url-new": {
-            "name": "Level Thumbnails URL",
-            "description": "This is the URL where the mod will fetch the thumbnails. Leave default for original.",
-            "type": "string",
-            "match": "(http|https):\\/\\/([\\w_-]+(?:(?:\\.[\\w_-]+)+))([\\w.,@?^=%&:\\/~+#-]*[\\w@?^=%&\\/~+#-])",
-            "filter": "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:.-_/0123456789",
-            "default": "https://levelthumbs.prevter.me/thumbnail"
+        "thumbnail-skew-angle": {
+            "name": "Thumbnail Skew Angle",
+            "description": "Adjust the diagonal cut angle used in level cells.",
+            "type": "int",
+            "min": 0,
+            "max": 35,
+            "default": 18,
+            "enable-if": "level-cell-thumbnails",
+            "control": {
+                "slider": true,
+                "slider-step": 1
+            }
         },
-        "legacy-url": {
-            "name": "Legacy URL",
-            "description": "Turn this on if you're using a server that still uses the old <cj>png</c> format.",
-            "type": "bool",
-            "default": false
+        "thumbnail-opacity": {
+            "name": "Thumbnail Opacity",
+            "description": "Opacity of thumbnails shown in level cells.",
+            "type": "int",
+            "min": 20,
+            "max": 255,
+            "default": 255,
+            "enable-if": "level-cell-thumbnails",
+            "control": {
+                "slider": true,
+                "slider-step": 1
+            }
         },
-        "level-thumbnails-url": {
-            "name": "Legacy Images URL",
-            "description": "This is the URL where the mod will fetch the thumbnails (Legacy PNGs). Leave default for original.",
-            "type": "string",
-            "match": "(http|https):\\/\\/([\\w_-]+(?:(?:\\.[\\w_-]+)+))([\\w.,@?^=%&:\\/~+#-]*[\\w@?^=%&\\/~+#-])",
-            "filter": "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:.-_/0123456789",
-            "enable-if": "legacy-url",
-            "default": "https://tjcsucht.net/levelthumbs"
+        "separator-opacity": {
+            "name": "Separator Opacity",
+            "description": "Opacity of the dark separator wedge in level cells.",
+            "type": "int",
+            "min": 0,
+            "max": 255,
+            "default": 50,
+            "enable-if": "level-cell-thumbnails",
+            "control": {
+                "slider": true,
+                "slider-step": 1
+            }
         },
         "level-bg": {
-            "name": "Level BG",
-            "description": "Enable displaying thumbnails as the background in the online level screen.",
+            "name": "Use Thumbnail As LevelInfo Background",
+            "description": "Display the level thumbnail behind the Level Info menu when available.",
             "type": "bool",
             "default": true
         },
+        "level-bg-quality": {
+            "name": "LevelInfo Background Quality",
+            "description": "High prefers full quality. Low uses a smaller image when available.",
+            "type": "string",
+            "one-of": [
+                "Low",
+                "High"
+            ],
+            "default": "High",
+            "enable-if": "level-bg"
+        },
+        "level-bg-scale-mode": {
+            "name": "LevelInfo Background Scale",
+            "description": "Cover fills the whole screen. Contain keeps the full image visible.",
+            "type": "string",
+            "one-of": [
+                "cover",
+                "contain"
+            ],
+            "default": "cover",
+            "enable-if": "level-bg"
+        },
         "darkening": {
-            "name": "Level BG Darkening",
+            "name": "LevelInfo Background Darkening",
             "type": "int",
             "min": 1,
             "max": 255,
+            "default": 100,
             "enable-if": "level-bg",
-            "default": 100
+            "control": {
+                "slider": true,
+                "slider-step": 1
+            }
         },
         "enable-blur": {
-            "name": "Level BG Blur",
+            "name": "LevelInfo Background Blur",
+            "description": "Currently not implemented by this port and will auto-disable when used.",
             "type": "bool",
-            "enable-if": "level-bg",
-            "default": false
+            "default": false,
+            "enable-if": "level-bg"
         },
         "blur-strength": {
-            "name": "Level BG Blur Strength",
-            "description": "How blurred the background will be.",
+            "name": "LevelInfo Blur Strength",
+            "description": "Reserved blur strength value.",
             "type": "int",
             "min": 1,
             "max": 10,
             "default": 2,
             "enable-if": "enable-blur"
+        },
+
+        "section-network": {
+            "type": "title",
+            "name": "Network & Performance"
+        },
+        "cache-limit": {
+            "name": "Memory Cache Limit",
+            "description": "Maximum thumbnails kept in RAM.",
+            "type": "int",
+            "min": 0,
+            "max": 500,
+            "default": 50
+        },
+        "file-cache-limit": {
+            "name": "Disk Cache Limit",
+            "description": "Maximum thumbnails cached on disk. Set to -1 for unlimited, 0 to disable disk cache.",
+            "type": "int",
+            "min": -1,
+            "max": 5000,
+            "default": 200
+        },
+        "file-cache-ttl-hours": {
+            "name": "Disk Cache TTL (Hours)",
+            "description": "How long disk-cached thumbnails stay valid before expiring.",
+            "type": "int",
+            "min": 1,
+            "max": 720,
+            "default": 168,
+            "control": {
+                "slider": true,
+                "slider-step": 1
+            }
+        },
+        "request-timeout-seconds": {
+            "name": "Request Timeout (Seconds)",
+            "description": "Network timeout for thumbnail downloads.",
+            "type": "int",
+            "min": 3,
+            "max": 120,
+            "default": 15,
+            "control": {
+                "slider": true,
+                "slider-step": 1
+            }
+        },
+        "request-retries": {
+            "name": "Request Retries",
+            "description": "Number of automatic retries when a download fails (404 is not retried).",
+            "type": "int",
+            "min": 0,
+            "max": 6,
+            "default": 2,
+            "control": {
+                "slider": true,
+                "slider-step": 1
+            }
+        },
+        "retry-backoff-ms": {
+            "name": "Retry Backoff (ms)",
+            "description": "Base delay between retries. Each retry increases the delay.",
+            "type": "int",
+            "min": 50,
+            "max": 5000,
+            "default": 400,
+            "control": {
+                "slider": true,
+                "slider-step": 50
+            }
+        },
+        "max-concurrent-downloads": {
+            "name": "Max Concurrent Downloads",
+            "description": "Caps simultaneous thumbnail downloads to keep scrolling smooth.",
+            "type": "int",
+            "min": 1,
+            "max": 12,
+            "default": 3,
+            "control": {
+                "slider": true,
+                "slider-step": 1
+            }
+        },
+        "legacy-url": {
+            "name": "Use Legacy PNG API",
+            "description": "Enable this if your endpoint serves old PNG files instead of modern responses.",
+            "type": "bool",
+            "default": false
+        },
+        "level-thumbnails-url-new": {
+            "name": "Modern API URL",
+            "description": "Default: https://levelthumbs.prevter.me/thumbnail",
+            "type": "string",
+            "match": "(http|https):\\/\\/([\\w_-]+(?:(?:\\.[\\w_-]+)+))([\\w.,@?^=%&:\\/~+#-]*[\\w@?^=%&\\/~+#-])",
+            "filter": "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:.-_/0123456789",
+            "default": "https://levelthumbs.prevter.me/thumbnail",
+            "enable-if": "!legacy-url"
+        },
+        "level-thumbnails-url": {
+            "name": "Legacy API URL",
+            "description": "Default: https://tjcsucht.net/levelthumbs",
+            "type": "string",
+            "match": "(http|https):\\/\\/([\\w_-]+(?:(?:\\.[\\w_-]+)+))([\\w.,@?^=%&:\\/~+#-]*[\\w@?^=%&\\/~+#-])",
+            "filter": "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:.-_/0123456789",
+            "default": "https://tjcsucht.net/levelthumbs",
+            "enable-if": "legacy-url"
+        },
+        "clear-memory-cache-now": {
+            "name": "Clear Memory Cache Now",
+            "description": "Enable once to clear all in-memory thumbnails. Automatically turns off.",
+            "type": "bool",
+            "default": false
+        },
+        "clear-disk-cache-now": {
+            "name": "Clear Disk Cache Now",
+            "description": "Enable once to delete cached thumbnail files. Automatically turns off.",
+            "type": "bool",
+            "default": false
+        },
+
+        "section-experimental": {
+            "type": "title",
+            "name": "Experimental"
+        },
+        "enable-thumbnail-taking": {
+            "name": "In-Game Thumbnail Taking",
+            "description": "<cr>Heavily work in progress.</c> May have visual issues.",
+            "type": "bool",
+            "default": false
         }
     },
     "dependencies": {

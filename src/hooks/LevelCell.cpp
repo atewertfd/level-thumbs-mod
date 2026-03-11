@@ -31,6 +31,37 @@ class $modify(ThumbnailLevelCell, LevelCell) {
         int32_t requestedLevelID = 0;
     };
 
+    bool isLikelyVisibleInViewport(float padding = 60.f) {
+        auto director = CCDirector::get();
+        if (!director) {
+            return true;
+        }
+
+        auto winSize = director->getWinSize();
+        auto worldBL = this->convertToWorldSpace({0.f, 0.f});
+        auto worldTR = this->convertToWorldSpace({this->getScaledContentWidth(), this->getScaledContentHeight()});
+
+        auto minX = std::min(worldBL.x, worldTR.x);
+        auto minY = std::min(worldBL.y, worldTR.y);
+        auto maxX = std::max(worldBL.x, worldTR.x);
+        auto maxY = std::max(worldBL.y, worldTR.y);
+
+        auto visibleRect = CCRect {
+            -padding,
+            -padding,
+            winSize.width + (padding * 2.f),
+            winSize.height + (padding * 2.f)
+        };
+        auto cellRect = CCRect {
+            minX,
+            minY,
+            maxX - minX,
+            maxY - minY
+        };
+
+        return visibleRect.intersectsRect(cellRect);
+    }
+
     CCPoint loadingSpinnerPos() {
         auto fallback = m_compactView ? ccp(272.f, 25.f) : ccp(334.f, 15.f);
 
@@ -121,15 +152,22 @@ class $modify(ThumbnailLevelCell, LevelCell) {
         }
         progress = std::clamp(progress, 0.f, 100.f);
 
-        if (!m_fields->progressLabel) {
-            auto label = CCLabelBMFont::create("0%", "bigFont.fnt");
-            label->setPosition({352.f, 1.f});
-            label->setAnchorPoint({1.f, 0.f});
-            label->setScale(0.25f);
-            label->setOpacity(128);
-            label->setID("download-progress"_spr);
-            this->addChild(label);
-            m_fields->progressLabel = label;
+        if (Settings::showDownloadProgressText()) {
+            if (!m_fields->progressLabel) {
+                auto label = CCLabelBMFont::create("0%", "bigFont.fnt");
+                label->setPosition({352.f, 1.f});
+                label->setAnchorPoint({1.f, 0.f});
+                label->setScale(0.25f);
+                label->setOpacity(128);
+                label->setID("download-progress"_spr);
+                this->addChild(label);
+                m_fields->progressLabel = label;
+            }
+
+            m_fields->progressLabel->setString(fmt::format("{:.0f}%", std::round(progress)).c_str());
+        } else if (m_fields->progressLabel) {
+            m_fields->progressLabel->removeFromParent();
+            m_fields->progressLabel = nullptr;
         }
 
         if (!m_fields->spinner) {
@@ -141,8 +179,6 @@ class $modify(ThumbnailLevelCell, LevelCell) {
         } else {
             m_fields->spinner->setPosition(loadingSpinnerPos());
         }
-
-        m_fields->progressLabel->setString(fmt::format("{:.0f}%", std::round(progress)).c_str());
     }
 
     void applyDailyAdjustments() {
@@ -201,7 +237,7 @@ class $modify(ThumbnailLevelCell, LevelCell) {
             separatorXMul = 0.75f;
         }
 
-        constexpr float angle = 18.f;
+        auto angle = Settings::thumbnailSkewAngle();
 
         auto rect = CCLayerColor::create({255, 255, 255});
         auto scaledImageSize = CCSize { image->getScaledContentWidth(), image->getContentHeight() * imgScale };
@@ -218,11 +254,12 @@ class $modify(ThumbnailLevelCell, LevelCell) {
         clipNode->setID("clip-node"_spr);
         m_fields->clipNode = clipNode;
 
+        image->setOpacity(Settings::thumbnailOpacity());
         image->setPosition(clipNode->getContentSize() * 0.5f);
 
         auto separator = CCLayerColor::create({0, 0, 0});
         separator->setZOrder(-2);
-        separator->setOpacity(50);
+        separator->setOpacity(Settings::thumbnailSeparatorOpacity());
         separator->setScaleX(0.45f);
         separator->ignoreAnchorPointForPosition(false);
         separator->setSkewX(angle * 2.f);
@@ -254,12 +291,20 @@ class $modify(ThumbnailLevelCell, LevelCell) {
             return;
         }
 
+        if (!Settings::levelCellThumbnailsEnabled()) {
+            return;
+        }
+
         if (Settings::listsLimitEnabled() && m_level->m_listPosition > Settings::levelListsLimit()) {
             return;
         }
 
         if (auto cached = ThumbnailManager::get().getThumbnail(m_fields->requestedLevelID)) {
             applyThumbnail(cached.value());
+            return;
+        }
+
+        if (!isLikelyVisibleInViewport()) {
             return;
         }
 
@@ -270,9 +315,13 @@ class $modify(ThumbnailLevelCell, LevelCell) {
         m_fields->fetchTask.spawn(
             ThumbnailManager::get().fetchThumbnail(
                 levelID,
+                ThumbnailManager::Quality::High,
                 [self = WeakRef(this), token](web::WebProgress const& progress) {
                     if (auto cell = self.lock()) {
                         if (cell->m_fields->requestToken != token) {
+                            return;
+                        }
+                        if (!cell->isLikelyVisibleInViewport()) {
                             return;
                         }
                         cell->updateProgress(progress.downloadProgress().value_or(0.f));
@@ -289,7 +338,11 @@ class $modify(ThumbnailLevelCell, LevelCell) {
                     }
 
                     if (res.isOk()) {
-                        cell->applyThumbnail(std::move(res).unwrap());
+                        if (cell->isLikelyVisibleInViewport()) {
+                            cell->applyThumbnail(std::move(res).unwrap());
+                        } else {
+                            cell->clearLoadingNodes();
+                        }
                     } else {
                         cell->clearLoadingNodes();
                     }
